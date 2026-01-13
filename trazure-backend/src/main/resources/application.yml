@@ -1,0 +1,20 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: trazure-backend
+  
+  # 数据库连接配置
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    # 注意：这里连接的是 localhost:3306 的 trazure_db
+    url: jdbc:mysql://localhost:3306/trazure_db?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai
+    username: root
+    password: 123456  # <--- 如果你刚才设置的密码不是 root，请在这里修改！
+
+# MyBatis-Plus 配置
+mybatis-plus:
+  configuration:
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl # 开启 SQL 日志打印，方便调试
+    map-underscore-to-camel-case: true # 开启下划线转驼峰 (user_name -> userName)
