@@ -1,4 +1,4 @@
-import 'leaflet/dist/leaflet.css'
+import 'mapbox-gl/dist/mapbox-gl.css' // <-- 加上这行
 import 'element-plus/dist/index.css' // <--- New: 引入 Element Plus 的样式文件
 
 import { createApp } from 'vue'
