@@ -1,35 +1,28 @@
 package com.trazure.trazurebackend.controller;
 
 import com.trazure.trazurebackend.entity.Footprint;
-import com.trazure.trazurebackend.mapper.FootprintMapper;
+import com.trazure.trazurebackend.service.FootprintService; // 引用接口
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
-import java.time.LocalDateTime;
 import java.util.List;
 
 @RestController
-@RequestMapping("/footprints") // 所有接口都以 /footprints 开头
+@RequestMapping("/footprints")
+@CrossOrigin(origins = "http://localhost:5173", allowCredentials = "true")
 public class FootprintController {
 
     @Autowired
-    private FootprintMapper footprintMapper;
+    private FootprintService footprintService; // 注入接口
 
-    // 1. 保存足迹 (POST /footprints)
-    @PostMapping
+    @PostMapping("/light-up")
     public String saveFootprint(@RequestBody Footprint footprint) {
-        // 暂时把用户ID写死为 1 (JackLawrence)，以后做了登录再改
-        footprint.setUserId(1L);
-        footprint.setVisitTime(LocalDateTime.now()); // 默认时间为当前
-
-        footprintMapper.insert(footprint);
+        footprintService.lightUp(footprint);
         return "success";
     }
 
-    // 2. 获取所有足迹 (GET /footprints)
-    // 用于把数据库里存的所有点都显示在地图上
-    @GetMapping
+    @GetMapping("/list")
     public List<Footprint> getAllFootprints() {
-        return footprintMapper.selectList(null);
+        return footprintService.getMyFootprints();
     }
 }

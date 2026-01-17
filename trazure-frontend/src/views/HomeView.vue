@@ -1,36 +1,31 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { ElMessage, ElLoading } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
+import axios from 'axios'
 
 mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN
 
 // 🌍 核心配置
 const CONFIG = {
-  // 国家 (Admin 0)
   COUNTRY: {
     SOURCE_ID: 'source-admin-0',
     URL: 'mapbox://jack-lawrence.69ikhr4b',
     LAYER_NAME: 'ne_10m_admin_0_countries-d4gkj4',
     PROMOTE_ID: 'NAME'
   },
-  // 省份 (Admin 1)
   PROVINCE: {
     SOURCE_ID: 'source-admin-1',
     URL: 'mapbox://jack-lawrence.2yx2o4dg',
     LAYER_NAME: 'ne_10m_admin_1_states_provinc-ahipp6',
     PROMOTE_ID: 'name'
   },
-  // 🏙️ 城市 (Admin 2 - 全球正式版)
   CITY: {
     SOURCE_ID: 'source-admin-2',
-    // 🟥 全球城市 Tileset ID (已更新)
     URL: 'mapbox://jack-lawrence.9jo2c1jg',
-    // 🟥 Layer Name (已更新)
     LAYER_NAME: 'cities_global-8wtj58',
-    // 🔑 我们清洗数据时专门保留的城市名字段
-    PROMOTE_ID: 'NAME_2'
+    PROMOTE_ID: 'GID_2'
   }
 }
 
@@ -42,6 +37,11 @@ const CATEGORY_STYLES = [
   { value: 5, label: '出生', color: '#ffd32a' },
 ]
 
+const api = axios.create({
+  baseURL: 'http://localhost:8080',
+  withCredentials: true
+})
+
 let map: mapboxgl.Map | null = null
 let hoveredFeatureId: string | number | null = null
 
@@ -50,25 +50,19 @@ const isSubmitting = ref(false)
 const selectedLabel = ref('')
 const currentMode = ref<'COUNTRY' | 'PROVINCE' | 'CITY' | 'CORNER'>('COUNTRY')
 
-// 数据仓库
-const savedState = reactive({
-  COUNTRY: {} as Record<string, string>,
-  PROVINCE: {} as Record<string, string>,
-  CITY: {} as Record<string, string>
-})
-
-const STORAGE_KEYS = { DATA: 'trazure_data_v12_optimized' }
-
 const targetInfo = reactive({
-  id: null as number | string | null,
+  id: null as string | null,
   name: '',
   lng: 0,
   lat: 0
 })
 
-const form = reactive({ category: 4, mood: '' })
+const form = reactive({
+  category: 1,
+  mood: '',
+  description: ''
+})
 
-// --- 工具：安全设置图层可见性 ---
 const setLayerVisibility = (layerIds: string[], isVisible: boolean) => {
   if (!map || !map.getStyle()) return
   layerIds.forEach(id => {
@@ -78,26 +72,18 @@ const setLayerVisibility = (layerIds: string[], isVisible: boolean) => {
   })
 }
 
-// --- 核心：模式切换 ---
 const updateLayerVisibility = () => {
   if (!map) return
   const mode = currentMode.value
-
-  // 定义各模式关联的图层 ID 组
   const groups = {
     COUNTRY: ['layer-admin0-fill', 'layer-admin0-line'],
     PROVINCE: ['layer-admin1-fill', 'layer-admin1-line'],
-    // 🏙️ 城市模式现在关联全球城市图层
     CITY: ['layer-admin2-fill', 'layer-admin2-line'],
     CORNER: []
   }
-
-  // 1. 先全部隐藏
   Object.values(groups).flat().forEach(id => {
     if (map!.getLayer(id)) map!.setLayoutProperty(id, 'visibility', 'none')
   })
-
-  // 2. 再显示当前模式
   // @ts-ignore
   const activeLayers = groups[mode] || []
   setLayerVisibility(activeLayers, true)
@@ -106,112 +92,101 @@ const updateLayerVisibility = () => {
 const switchMode = (mode: 'COUNTRY' | 'PROVINCE' | 'CITY' | 'CORNER') => {
   currentMode.value = mode
   updateLayerVisibility()
-
-  // 3D 视角运镜
   if (mode === 'COUNTRY') map!.flyTo({ zoom: 2.5, pitch: 0 })
   else if (mode === 'PROVINCE') map!.flyTo({ zoom: 4, pitch: 0 })
-  else if (mode === 'CITY') map!.flyTo({ zoom: 8, pitch: 45 }) // 城市视角
+  else if (mode === 'CITY') map!.flyTo({ zoom: 8, pitch: 45 })
   else map!.flyTo({ zoom: 14, pitch: 60 })
 }
 
-// --- 数据持久化与恢复 ---
-const saveToStorage = () => localStorage.setItem(STORAGE_KEYS.DATA, JSON.stringify(savedState))
-
-const loadFromStorage = () => {
+const loadFootprints = async () => {
   try {
-    const data = localStorage.getItem(STORAGE_KEYS.DATA)
-    if (data) Object.assign(savedState, JSON.parse(data))
-  } catch(e) {}
+    const res = await api.get('/footprints/list')
+    const footprints = res.data
+    footprints.forEach((fp: any) => {
+      let cfg = CONFIG.CITY
+      if (fp.layerType === 'COUNTRY') cfg = CONFIG.COUNTRY
+      else if (fp.layerType === 'PROVINCE') cfg = CONFIG.PROVINCE
+
+      const style = CATEGORY_STYLES.find(c => c.value === fp.category)
+      const color = style ? style.color : '#ffffff'
+
+      if (fp.regionId && map && map.getSource(cfg.SOURCE_ID)) {
+        if (map.isSourceLoaded(cfg.SOURCE_ID)) {
+          map.setFeatureState(
+            { source: cfg.SOURCE_ID, sourceLayer: cfg.LAYER_NAME, id: fp.regionId },
+            { occupied: true, color: color }
+          )
+        } else {
+          map.once('sourcedata', () => {
+            map!.setFeatureState(
+              { source: cfg.SOURCE_ID, sourceLayer: cfg.LAYER_NAME, id: fp.regionId },
+              { occupied: true, color: color }
+            )
+          })
+        }
+      }
+    })
+    console.log('✅ 已从云端加载足迹:', footprints.length)
+  } catch (error) {
+    console.error('加载足迹失败:', error)
+  }
 }
 
-const restoreFeatureState = () => {
-  if (!map || !map.isStyleLoaded()) return
-
-  // 恢复国家
-  Object.entries(savedState.COUNTRY).forEach(([id, color]) => {
-    map!.setFeatureState(
-      { source: CONFIG.COUNTRY.SOURCE_ID, sourceLayer: CONFIG.COUNTRY.LAYER_NAME, id: id },
-      { occupied: true, color: color }
-    )
-  })
-  // 恢复省份
-  Object.entries(savedState.PROVINCE).forEach(([id, color]) => {
-    map!.setFeatureState(
-      { source: CONFIG.PROVINCE.SOURCE_ID, sourceLayer: CONFIG.PROVINCE.LAYER_NAME, id: id },
-      { occupied: true, color: color }
-    )
-  })
-  // 恢复城市
-  Object.entries(savedState.CITY).forEach(([id, color]) => {
-    map!.setFeatureState(
-      { source: CONFIG.CITY.SOURCE_ID, sourceLayer: CONFIG.CITY.LAYER_NAME, id: id },
-      { occupied: true, color: color }
-    )
-  })
-}
-
-// --- 提交逻辑 ---
 const handleSubmit = async () => {
   if (!map) return
   isSubmitting.value = true
-  const color = CATEGORY_STYLES.find(c => c.value === form.category)!.color
+  const finalRegionId = targetInfo.id || `CORNER_${Date.now()}_${Math.floor(Math.random()*1000)}`
 
-  setTimeout(() => {
-    const id = targetInfo.id as string
+  const footprintData = {
+    userId: 1,
+    regionId: finalRegionId,
+    layerType: currentMode.value,
+    latitude: targetInfo.lat,
+    longitude: targetInfo.lng,
+    locationName: targetInfo.name,
+    category: form.category,
+    mood: form.mood,
+    description: form.description,
+    visitTime: new Date().toISOString()
+  }
 
-    // 1. 国家模式
-    if (currentMode.value === 'COUNTRY' && id) {
-      savedState.COUNTRY[id] = color
-      map!.setFeatureState(
-        { source: CONFIG.COUNTRY.SOURCE_ID, sourceLayer: CONFIG.COUNTRY.LAYER_NAME, id: id },
-        { occupied: true, color: color }
-      )
-      ElMessage.success(`国家点亮：${targetInfo.name}`)
-    }
-    // 2. 省份模式
-    else if (currentMode.value === 'PROVINCE' && id) {
-      savedState.PROVINCE[id] = color
-      map!.setFeatureState(
-        { source: CONFIG.PROVINCE.SOURCE_ID, sourceLayer: CONFIG.PROVINCE.LAYER_NAME, id: id },
-        { occupied: true, color: color }
-      )
-      ElMessage.success(`省份点亮：${targetInfo.name}`)
-    }
-    // 3. 城市模式 (全球)
-    else if (currentMode.value === 'CITY' && id) {
-      savedState.CITY[id] = color
-      map!.setFeatureState(
-        { source: CONFIG.CITY.SOURCE_ID, sourceLayer: CONFIG.CITY.LAYER_NAME, id: id },
-        { occupied: true, color: color }
-      )
-      ElMessage.success(`城市点亮：${targetInfo.name}`)
-    }
-    // 4. 角落
-    else {
+  try {
+    await api.post('/footprints/light-up', footprintData)
+    const color = CATEGORY_STYLES.find(c => c.value === form.category)!.color
+
+    if (currentMode.value !== 'CORNER' && targetInfo.id) {
+      const cfg = CONFIG[currentMode.value]
+      if (cfg) {
+        map!.setFeatureState(
+          { source: cfg.SOURCE_ID, sourceLayer: cfg.LAYER_NAME, id: targetInfo.id },
+          { occupied: true, color: color }
+        )
+      }
+    } else {
       const el = document.createElement('div')
       el.className = 'corner-pin'
       el.style.borderColor = color
       el.innerHTML = `<div class="pin-head" style="background:${color}"></div>`
-      new mapboxgl.Marker({ element: el, anchor: 'bottom' }).setLngLat([targetInfo.lng, targetInfo.lat]).addTo(map!)
-      ElMessage.success(`坐标已标记`)
+      new mapboxgl.Marker({ element: el, anchor: 'bottom' })
+        .setLngLat([targetInfo.lng, targetInfo.lat])
+        .addTo(map!)
     }
-
-    saveToStorage()
-    isSubmitting.value = false
+    ElMessage.success(`✨ 点亮成功：${targetInfo.name}`)
     drawerVisible.value = false
-  }, 300)
+  } catch (error) {
+    console.error(error)
+    ElMessage.error('点亮失败，请检查后端服务')
+  } finally {
+    isSubmitting.value = false
+  }
 }
 
-// --- 通用图层添加函数 (DRY原则) ---
 const addVectorLayer = (type: 'COUNTRY' | 'PROVINCE' | 'CITY') => {
   const cfg = CONFIG[type]
-
-  // 映射 ID 前缀：COUNTRY->admin0, PROVINCE->admin1, CITY->admin2
   let layerPrefix = 'layer-admin0'
   if (type === 'PROVINCE') layerPrefix = 'layer-admin1'
   if (type === 'CITY') layerPrefix = 'layer-admin2'
 
-  // 添加源
   if (!map!.getSource(cfg.SOURCE_ID)) {
     map!.addSource(cfg.SOURCE_ID, {
       type: 'vector',
@@ -219,8 +194,6 @@ const addVectorLayer = (type: 'COUNTRY' | 'PROVINCE' | 'CITY') => {
       promoteId: cfg.PROMOTE_ID
     })
   }
-
-  // 填充层 (Fill)
   map!.addLayer({
     'id': `${layerPrefix}-fill`,
     'type': 'fill',
@@ -237,8 +210,6 @@ const addVectorLayer = (type: 'COUNTRY' | 'PROVINCE' | 'CITY') => {
       'fill-opacity': 0.8
     }
   })
-
-  // 轮廓层 (Line)
   map!.addLayer({
     'id': `${layerPrefix}-line`,
     'type': 'line',
@@ -253,8 +224,6 @@ const addVectorLayer = (type: 'COUNTRY' | 'PROVINCE' | 'CITY') => {
 }
 
 onMounted(() => {
-  loadFromStorage()
-
   map = new mapboxgl.Map({
     container: 'map-container',
     style: 'mapbox://styles/mapbox/dark-v11',
@@ -269,39 +238,59 @@ onMounted(() => {
     map!.addSource('mapbox-dem', { 'type': 'raster-dem', 'url': 'mapbox://mapbox.mapbox-terrain-dem-v1', 'tileSize': 512, 'maxzoom': 14 })
     map!.setTerrain({ 'source': 'mapbox-dem', 'exaggeration': 1.5 })
 
-    // 3. 加载自定义瓦片
+    // 🏗️ 修复2：添加 3D 建筑图层
+    // 这会让地图上的楼房在放大时立起来
+    if (!map!.getLayer('3d-buildings')) {
+      map!.addLayer({
+        'id': '3d-buildings',
+        'source': 'composite',
+        'source-layer': 'building',
+        'filter': ['==', 'extrude', 'true'],
+        'type': 'fill-extrusion',
+        'minzoom': 15,
+        'paint': {
+          'fill-extrusion-color': '#aaa',
+          'fill-extrusion-height': [
+            'interpolate', ['linear'], ['zoom'],
+            15, 0,
+            15.05, ['get', 'height']
+          ],
+          'fill-extrusion-base': [
+            'interpolate', ['linear'], ['zoom'],
+            15, 0,
+            15.05, ['get', 'min_height']
+          ],
+          'fill-extrusion-opacity': 0.6
+        }
+      })
+    }
+
     addVectorLayer('COUNTRY')
     addVectorLayer('PROVINCE')
-    addVectorLayer('CITY') // 👈 这一行现在会加载全球城市数据
+    addVectorLayer('CITY')
 
-    // 4. 初始化图层状态
     updateLayerVisibility()
-    restoreFeatureState()
+    loadFootprints()
   })
 
-  // --- 统一交互处理 ---
   const handleInteraction = (e: mapboxgl.MapMouseEvent, isClick: boolean) => {
-    let type: 'COUNTRY' | 'PROVINCE' | 'CITY' | null = null
-    if (currentMode.value === 'COUNTRY') type = 'COUNTRY'
-    else if (currentMode.value === 'PROVINCE') type = 'PROVINCE'
-    else if (currentMode.value === 'CITY') type = 'CITY' // 允许城市模式
-
-    // 角落模式不走瓦片交互
-    if (!type) {
+    const mode = currentMode.value
+    if (mode === 'CORNER') {
       if (isClick) {
+        targetInfo.id = null
+        targetInfo.name = '未知角落'
         targetInfo.lng = e.lngLat.lng
         targetInfo.lat = e.lngLat.lat
-        selectedLabel.value = '角落'
+        selectedLabel.value = '标记角落'
         drawerVisible.value = true
       }
       return
     }
 
-    const cfg = CONFIG[type]
-    // 映射图层名
+    const cfg = CONFIG[mode]
     let layerId = 'layer-admin0-fill'
-    if (type === 'PROVINCE') layerId = 'layer-admin1-fill'
-    if (type === 'CITY') layerId = 'layer-admin2-fill'
+    if (mode === 'PROVINCE') layerId = 'layer-admin1-fill'
+    if (mode === 'CITY') layerId = 'layer-admin2-fill'
 
     const features = map!.queryRenderedFeatures(e.point, { layers: [layerId] })
 
@@ -310,34 +299,30 @@ onMounted(() => {
       const feat = features[0]
       const id = feat.id as string
 
-      // 悬停逻辑
       if (!isClick) {
         if (hoveredFeatureId !== id) {
           if (hoveredFeatureId) map!.setFeatureState({ source: cfg.SOURCE_ID, sourceLayer: cfg.LAYER_NAME, id: hoveredFeatureId }, { hover: false })
           hoveredFeatureId = id
           map!.setFeatureState({ source: cfg.SOURCE_ID, sourceLayer: cfg.LAYER_NAME, id: hoveredFeatureId }, { hover: true })
         }
-      }
-      // 点击逻辑
-      else {
+      } else {
         targetInfo.id = id
-        targetInfo.name = id
+        targetInfo.name = feat.properties?.['NAME_2'] || feat.properties?.['name'] || feat.properties?.['NAME'] || id
         targetInfo.lng = e.lngLat.lng
         targetInfo.lat = e.lngLat.lat
-        selectedLabel.value = id
+        selectedLabel.value = targetInfo.name
         drawerVisible.value = true
       }
     } else {
       map!.getCanvas().style.cursor = ''
-      // 如果点击了空白处 (特别是城市模式)，允许点选坐标 (Fallback)
-      if (isClick && type === 'CITY') {
+      if (isClick && mode === 'CITY') {
         targetInfo.lng = e.lngLat.lng
         targetInfo.lat = e.lngLat.lat
-        selectedLabel.value = '未知区域 (无边界)'
-        targetInfo.id = null // 清空 ID，走普通 Pin 逻辑
+        selectedLabel.value = '未知区域'
+        targetInfo.id = null
+        targetInfo.name = '未知坐标'
         drawerVisible.value = true
       }
-
       if (!isClick && hoveredFeatureId) {
         map!.setFeatureState({ source: cfg.SOURCE_ID, sourceLayer: cfg.LAYER_NAME, id: hoveredFeatureId }, { hover: false })
         hoveredFeatureId = null
@@ -352,7 +337,7 @@ onMounted(() => {
 
 <template>
   <div class="page-container">
-    <div id="map-container"></div>
+    <div id="map-container" @contextmenu.prevent></div>
 
     <div class="level-switcher">
       <div class="switch-bg">
@@ -391,9 +376,13 @@ onMounted(() => {
             <el-input v-model="form.mood" type="textarea" placeholder="写下这一刻..." />
           </el-form-item>
 
+          <el-form-item label="详细故事">
+            <el-input v-model="form.description" type="textarea" rows="3" placeholder="Markdown 格式日记..." />
+          </el-form-item>
+
           <el-button type="primary" class="glow-btn" @click="handleSubmit" :loading="isSubmitting"
                      :style="{ background: CATEGORY_STYLES.find(c=>c.value===form.category)?.color }">
-            {{ isSubmitting ? '点亮中...' : '确认点亮' }}
+            {{ isSubmitting ? '同步中...' : '确认点亮 ✨' }}
           </el-button>
         </el-form>
       </div>

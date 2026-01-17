@@ -8,10 +8,6 @@ import lombok.Data;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
-/**
- * 足迹实体类
- * 对应数据库表: footprints
- */
 @Data
 @TableName("footprints")
 public class Footprint {
@@ -21,23 +17,34 @@ public class Footprint {
 
     private Long userId;
 
-    // 经纬度要求高精度，在 Java 中使用 BigDecimal
+    // 🌍 核心地图索引
+    private String regionId;
+    private String layerType;
+
+    // 📍 地理坐标
     private BigDecimal latitude;
-
     private BigDecimal longitude;
-
     private String locationName;
 
-    private String countryCode;
+    // 🎨 情感与分类
+    private Integer category;
+    private Boolean isBucketList;
 
+    // 💊 深度记忆胶囊 (完整元数据)
     private LocalDateTime visitTime;
-
+    private String purpose;
+    private String companions;
     private String mood;
-
     private String description;
+    private BigDecimal cost;
+    private String transportMode;
+    private String pois;
+    private String highlight;
+    private String pets;
+    private String badExperience;
+    private String newFriends;
 
-    // 预留的元数据扩展字段
-    private String metaData;
-
+    // ⏱️ 时间记录
     private LocalDateTime createdAt;
+    private LocalDateTime updatedAt;
 }

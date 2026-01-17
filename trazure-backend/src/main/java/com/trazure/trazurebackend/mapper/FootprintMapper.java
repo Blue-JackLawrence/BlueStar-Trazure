@@ -6,5 +6,5 @@ import org.apache.ibatis.annotations.Mapper;
 
 @Mapper
 public interface FootprintMapper extends BaseMapper<Footprint> {
-    // 同样空着就行
+    // MP 自动处理，无需手写 SQL
 }
