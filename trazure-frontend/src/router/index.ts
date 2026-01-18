@@ -1,16 +1,27 @@
-import { createRouter, createWebHistory } from 'vue-router'
-// 关键：确保这里引用了你手动创建的 HomeView
+import { createRouter, createWebHashHistory } from 'vue-router'
 import HomeView from '../views/HomeView.vue'
+import LoginView from '../views/LoginView.vue'
+import { useUserStore } from '@/stores/user'
 
 const router = createRouter({
-  history: createWebHistory(import.meta.env.BASE_URL),
+  history: createWebHashHistory(),
   routes: [
-    {
-      path: '/',
-      name: 'home',
-      component: HomeView
-    }
+    { path: '/', name: 'home', component: HomeView },
+    { path: '/login', name: 'login', component: LoginView }
   ]
+})
+
+// 🛡️ 路由守卫
+router.beforeEach((to, from, next) => {
+  const userStore = useUserStore()
+  // 初始化用户状态 (防止刷新丢失)
+  userStore.initUser()
+
+  if (to.name !== 'login' && !userStore.isLogin) {
+    next({ name: 'login' }) // 没登录？去登录页
+  } else {
+    next()
+  }
 })
 
 export default router
