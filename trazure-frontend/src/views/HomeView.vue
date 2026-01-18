@@ -1,32 +1,31 @@
 <script setup lang="ts">
-// ✅ 修复 1: 引入 computed
 import { onMounted, reactive, ref, computed } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, type UploadFile, type UploadUserFile } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import axios from 'axios'
 import mapboxgl from 'mapbox-gl'
 
-// ✅ 引入“工具包”
+// 引入工具包
 import { useFileSystem } from '@/composables/useFileSystem'
 import { useMapbox } from '@/composables/useMapbox'
-import { useUserStore } from '@/stores/user' // 1. 引入 Store
+import { useUserStore } from '@/stores/user'
 import { storeToRefs } from 'pinia'
 
-// 获取当前用户
+// 1. 初始化路由与用户
+const router = useRouter()
 const userStore = useUserStore()
 const { userInfo } = storeToRefs(userStore)
 
-// 动态生成用户目录
-// 如果用户是 Jack (id=1)，目录就是 "User_Jack_1"
-// 这样可以保证唯一性，也容易辨识
+// 2. 动态生成用户目录
+// ⚠️ 如果你以前的图片存在 User_1001，请手动将该文件夹重命名为 User_Jack Lawrence_1
 const CURRENT_USER_DIR = computed(() => {
-  // 增加一个安全判断，防止未登录时报错
   if (!userInfo.value || !userInfo.value.username) return 'User_Guest'
-  return `User_${userInfo.value.username}_${userInfo.value.id}`
+  return `User_${userInfo.value.username}`
 })
 
-// 拆包：文件系统能力
-// ✅ 修复 2: 使用 .value 获取计算属性的字符串值
+// 3. 拆包：文件系统能力
+// 🟢 关键修正：这里直接传 Ref 对象 (不要加 .value)，保证用户切换时路径自动更新
 const {
   currentStoragePath,
   loadStoragePath,
@@ -34,9 +33,9 @@ const {
   saveToLocal,
   getFromLocal,
   deleteFromLocal
-} = useFileSystem(CURRENT_USER_DIR.value)
+} = useFileSystem(CURRENT_USER_DIR)
 
-// 拆包：地图能力
+// 4. 拆包：地图能力
 const {
   map,
   currentMode,
@@ -48,7 +47,7 @@ const {
 } = useMapbox()
 
 
-// --- 2. 业务状态定义 ---
+// --- 业务状态定义 ---
 
 const API_BASE = 'http://localhost:8080'
 const api = axios.create({ baseURL: API_BASE, withCredentials: true })
@@ -67,8 +66,8 @@ const CATEGORY_STYLES = [
 const drawerVisible = ref(false)
 const isSubmitting = ref(false)
 const selectedLabel = ref('')
-const footprintCache = reactive(new Map<string, any>()) // 缓存足迹数据
-let hoveredFeatureId: string | null = null // 保持为局部变量
+const footprintCache = reactive(new Map<string, any>())
+let hoveredFeatureId: string | null = null
 
 // 表单数据
 const form = reactive({ category: 1, mood: '', description: '' })
@@ -82,9 +81,9 @@ const dialogImageUrl = ref('')
 const dialogVisible = ref(false)
 
 
-// --- 3. 核心业务逻辑 ---
+// --- 核心业务逻辑 ---
 
-// ✅ 加载足迹：从云端拉取数据 -> 调用 Mapbox 工具包画图
+// 加载足迹
 const loadFootprints = async () => {
   try {
     const res = await api.get('/footprints/list')
@@ -92,8 +91,6 @@ const loadFootprints = async () => {
       footprintCache.set(fp.regionId, fp)
       const style = CATEGORY_STYLES.find(c => c.value === fp.category)
       const color = style ? style.color : '#ffffff'
-
-      // 使用工具包方法高亮区域
       highlightRegion(fp.regionId, fp.layerType, color)
     })
     console.log('✅ 足迹加载完成:', res.data.length)
@@ -102,13 +99,12 @@ const loadFootprints = async () => {
   }
 }
 
-// ✅ 加载图片：从云端拿文件名 -> 调用 FileSystem 工具包读硬盘
+// 加载图片
 const fetchMediaAssets = async (footprintId: number) => {
   fileList.value = []
   try {
     const res = await api.get(`/media/list/${footprintId}`)
     for (const asset of res.data) {
-      // 使用工具包方法读取本地文件
       const blob = await getFromLocal(asset.fileName)
       if (blob) {
         fileList.value.push({
@@ -124,17 +120,14 @@ const fetchMediaAssets = async (footprintId: number) => {
   }
 }
 
-// ✅ 图片变动：调用 FileSystem 工具包存硬盘
+// 图片变动
 const handleFileChange = async (uploadFile: UploadFile) => {
   if (!uploadFile.raw) return
   const extension = uploadFile.name.substring(uploadFile.name.lastIndexOf('.'))
   const uuid = crypto.randomUUID() + extension
 
   try {
-    // 存入本地
     await saveToLocal(uuid, uploadFile.raw)
-
-    // 加入待提交队列
     pendingUploads.value.push({ uuid: uuid, file: uploadFile.raw })
     uploadFile.name = uuid
     uploadFile.status = 'success'
@@ -143,17 +136,17 @@ const handleFileChange = async (uploadFile: UploadFile) => {
   }
 }
 
-// ✅ 删除图片：调用 FileSystem 工具包删硬盘
+// 删除图片
 const handleRemove = async (uploadFile: UploadFile) => {
   // @ts-ignore
-  if (uploadFile.id) { // 旧图 (已入库)
+  if (uploadFile.id) {
     try {
       // @ts-ignore
       await api.delete(`/media/delete/${uploadFile.id}`)
       await deleteFromLocal(uploadFile.name)
       ElMessage.success('已删除')
     } catch (e) { ElMessage.error('删除失败') }
-  } else { // 新图 (未入库)
+  } else {
     const index = pendingUploads.value.findIndex(p => p.uuid === uploadFile.name)
     if (index > -1) {
       await deleteFromLocal(uploadFile.name)
@@ -162,16 +155,15 @@ const handleRemove = async (uploadFile: UploadFile) => {
   }
 }
 
-// ✅ 提交表单 (点亮)
+// 提交表单
 const handleSubmit = async () => {
   isSubmitting.value = true
   const finalRegionId = targetInfo.id || `CORNER_${Date.now()}_${Math.floor(Math.random()*1000)}`
 
   try {
-    // 1. 存云端元数据
     const footprintData = {
       id: currentFootprintId.value,
-      userId: 1,
+      userId: userInfo.value.id || 1, // 使用真实用户ID
       regionId: finalRegionId,
       layerType: currentMode.value,
       latitude: targetInfo.lat,
@@ -185,12 +177,10 @@ const handleSubmit = async () => {
     const res = await api.post('/footprints/light-up', footprintData)
     const newId = res.data
 
-    // 2. 绑定图片 (仅发送 UUID)
     for (const item of pendingUploads.value) {
       await api.post('/media/bind', { footprintId: newId, type: 1, fileName: item.uuid })
     }
 
-    // 3. 更新 UI 和缓存
     footprintCache.set(finalRegionId, { ...footprintData, id: newId })
     const color = CATEGORY_STYLES.find(c => c.value === form.category)!.color
 
@@ -213,13 +203,12 @@ const handleSubmit = async () => {
   }
 }
 
-// 图片预览 helper
 const handlePictureCardPreview = (uploadFile: UploadFile) => {
   dialogImageUrl.value = uploadFile.url!
   dialogVisible.value = true
 }
 
-// 辅助：打开抽屉的几种情况 (保持原有逻辑)
+// 辅助逻辑
 const openDrawerForCorner = (e: mapboxgl.MapMouseEvent) => {
   resetForm()
   targetInfo.id = null
@@ -238,7 +227,6 @@ const openDrawerForRegion = (feat: any, e: mapboxgl.MapMouseEvent) => {
   targetInfo.lat = e.lngLat.lat
   selectedLabel.value = targetInfo.name
 
-  // 回显数据
   const data = footprintCache.get(id)
   if (data) {
     form.category = data.category
@@ -272,25 +260,18 @@ const resetForm = () => {
 }
 
 
-// --- 4. 生命周期与地图交互 ---
+// --- 生命周期 ---
 
 onMounted(() => {
-  // 1. 读取路径
   loadStoragePath()
-
-  // 2. 初始化地图 (传入 DOM ID 和 加载完成后的回调)
   initMap('map-container', () => {
-    // 地图加载完成后，立刻拉取足迹数据
     loadFootprints()
-
-    // 绑定交互事件
     const m = map.value!
     m.on('mousemove', (e) => handleInteraction(e, false))
     m.on('click', (e) => handleInteraction(e, true))
   })
 })
 
-// 地图交互逻辑 (保持原来的核心逻辑，通过 map.value 操作)
 const handleInteraction = (e: mapboxgl.MapMouseEvent, isClick: boolean) => {
   const m = map.value!
   if (currentMode.value === 'CORNER') {
@@ -298,7 +279,6 @@ const handleInteraction = (e: mapboxgl.MapMouseEvent, isClick: boolean) => {
     return
   }
 
-  // 动态判断当前层级 (使用 useMapbox 导出的 CONFIG)
   let layerId = 'layer-admin0-fill'
   if (currentMode.value === 'PROVINCE') layerId = 'layer-admin1-fill'
   if (currentMode.value === 'CITY') layerId = 'layer-admin2-fill'
@@ -312,14 +292,12 @@ const handleInteraction = (e: mapboxgl.MapMouseEvent, isClick: boolean) => {
     const id = feat.id as string
 
     if (!isClick) {
-      // Hover 效果
       if (hoveredFeatureId !== id) {
         if (hoveredFeatureId) m.setFeatureState({ source: cfg.SOURCE_ID, sourceLayer: cfg.LAYER_NAME, id: hoveredFeatureId }, { hover: false })
         hoveredFeatureId = id
         m.setFeatureState({ source: cfg.SOURCE_ID, sourceLayer: cfg.LAYER_NAME, id: hoveredFeatureId }, { hover: true })
       }
     } else {
-      // Click 效果
       openDrawerForRegion(feat, e)
     }
   } else {
@@ -336,6 +314,11 @@ const handleInteraction = (e: mapboxgl.MapMouseEvent, isClick: boolean) => {
 <template>
   <div class="page-container">
     <div id="map-container" @contextmenu.prevent></div>
+
+    <div class="user-avatar-btn" @click="router.push('/user')">
+      <img v-if="userInfo.avatar" :src="userInfo.avatar" />
+      <div v-else class="avatar-placeholder">{{ userInfo.username?.[0]?.toUpperCase() || 'U' }}</div>
+    </div>
 
     <div class="level-switcher">
       <div class="switch-bg">
@@ -399,7 +382,7 @@ const handleInteraction = (e: mapboxgl.MapMouseEvent, isClick: boolean) => {
 </template>
 
 <style>
-/* 保持原有样式完全不变 */
+/* 样式保持不变 */
 body { margin: 0; background: #000; overflow: hidden; }
 .page-container { width: 100vw; height: 100vh; position: relative; }
 #map-container { width: 100%; height: 100%; position: absolute; }
@@ -456,5 +439,40 @@ body { margin: 0; background: #000; overflow: hidden; }
 .change-btn:hover {
   border-color: #e6a23c;
   color: #e6a23c;
+}
+
+/* 用户头像样式 */
+.user-avatar-btn {
+  position: absolute;
+  top: 30px;
+  right: 30px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(5px);
+  cursor: pointer;
+  z-index: 20;
+  overflow: hidden;
+  transition: all 0.3s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.user-avatar-btn:hover {
+  border-color: #00ffc8;
+  transform: scale(1.1);
+  box-shadow: 0 0 15px rgba(0, 255, 200, 0.3);
+}
+.avatar-placeholder {
+  color: #fff;
+  font-weight: bold;
+  font-size: 18px;
+}
+.user-avatar-btn img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 </style>
