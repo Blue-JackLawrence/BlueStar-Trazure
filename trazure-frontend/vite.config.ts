@@ -1,14 +1,22 @@
 import { fileURLToPath, URL } from 'node:url'
-
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
-import vueDevTools from 'vite-plugin-vue-devtools'
+import electron from 'vite-plugin-electron/simple' // ✅ 使用 simple 模式
 
-// https://vite.dev/config/
 export default defineConfig({
   plugins: [
     vue(),
-    vueDevTools(),
+    // ✅ 新增 Electron 插件配置
+    electron({
+      main: {
+        entry: 'electron/main.ts',
+      },
+      preload: {
+        input: 'electron/preload.ts',
+      },
+      // 这里的 renderer 只是为了让开发环境更好用
+      renderer: {},
+    }),
   ],
   resolve: {
     alias: {

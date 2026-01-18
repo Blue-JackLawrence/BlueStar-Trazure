@@ -13,12 +13,14 @@ import java.util.List;
 public class FootprintController {
 
     @Autowired
-    private FootprintService footprintService; // 注入接口
+    private FootprintService footprintService;
 
+    // 🔴 修改点：返回值从 String 改为 Long (返回生成的ID)
     @PostMapping("/light-up")
-    public String saveFootprint(@RequestBody Footprint footprint) {
+    public Long saveFootprint(@RequestBody Footprint footprint) {
         footprintService.lightUp(footprint);
-        return "success";
+        // MybatisPlus 插入后会自动回填 ID 到对象中
+        return footprint.getId();
     }
 
     @GetMapping("/list")
